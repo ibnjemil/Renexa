@@ -5,83 +5,76 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// --- CONFIGURATION ---
+const HUGGING_FACE_TOKEN = "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"; // PASTE YOUR FULL TOKEN HERE
+const MODEL_URL = "https://api-inference.huggingface.co/models/mistralai/Mixtral-8x7B-Instruct-v0.1";
+
+// Simple in-memory limit for the demo (resets if the function sleeps)
+let globalPromptCounter = 0;
+const PROMPT_LIMIT = 10;
+
 serve(async (req) => {
+  // Handle CORS
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
     const { messages } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const userMessage = messages[messages.length - 1].content.toLowerCase();
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    // 1. 🛡️ THE 10-PROMPT LIMIT CHECK
+    if (globalPromptCounter >= PROMPT_LIMIT) {
+      return new Response(JSON.stringify({ 
+        error: "Daily Limit Reached: Renexa's free tier allows 10 technical brainstorms per session. Upgrade to Pro for unlimited access." 
+      }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // 2. 🛡️ THE TOPIC LIMIT (Strict Filter)
+    const allowedKeywords = ["invent", "design", "build", "create", "tech", "prototype", "engine", "solar", "machine", "software", "product", "material"];
+    const isInventionRelated = allowedKeywords.some(word => userMessage.includes(word));
+
+    if (!isInventionRelated) {
+      return new Response(JSON.stringify({ 
+        error: "Topic Restriction: I am hard-coded to only discuss inventions and engineering. Please ask about a project idea!" 
+      }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // 3. 🧠 COMPLEX SYSTEM PROMPT
+    const systemInstruction = `You are the Renexa Technical Engine. Format your response exactly like this:
+    ## 💡 Invention Name: [Catchy Name]
+    ## 🎯 Problem: [Who does this help and why?]
+    ## 🔧 Engineering Specs: [Detailed technical explanation of how it works]
+    ## 📊 Market Fit: [Who would buy this in Ethiopia or globally?]
+    ## 🚀 Next Steps: [Step 1, 2, 3 to build it]`;
+
+    // 4. 📡 CALL HUGGING FACE
+    const response = await fetch(MODEL_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${HUGGING_FACE_TOKEN}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
-        messages: [
-          {
-            role: "system",
-            content: `You are the Renex AI Brainstorm Assistant — a world-class invention development partner. Help inventors develop their ideas into full invention concepts with deep technical analysis.
-
-For each idea, provide a comprehensive breakdown:
-
-## 💡 Invention Name
-A catchy, memorable name
-
-## 🎯 Problem Statement
-What real-world problem this solves, who suffers from it, and how big the problem is
-
-## 🔧 Technical Approach
-Specific engineering methods, technologies, materials, and how they work together. Be detailed and practical.
-
-## 📊 Market Opportunity
-Target market size, demographics, competitive landscape, and potential revenue
-
-## 🚀 Implementation Roadmap
-Step-by-step plan from concept to prototype to market, with estimated timelines
-
-## 💰 Revenue Model
-How to monetize — pricing strategies, business models, licensing opportunities
-
-## ⚡ Key Risks & Mitigations
-Potential challenges and how to overcome them
-
-Be enthusiastic, specific, technically accurate, and actionable. Use clear markdown formatting with headers, bullet points, and emphasis where appropriate.`
-          },
-          ...messages,
-        ],
-        stream: true,
+        inputs: `<s>[INST] ${systemInstruction} \n\n User Idea: ${userMessage} [/INST]`,
+        parameters: { max_new_tokens: 1200, temperature: 0.7 }
       }),
     });
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limited. Please try again in a moment." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Please add funds." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const t = await response.text();
-      console.error("AI gateway error:", response.status, t);
-      return new Response(JSON.stringify({ error: "AI gateway error" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!response.ok) throw new Error("AI Brain offline");
 
-    return new Response(response.body, {
-      headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-    });
-  } catch (e) {
-    console.error("brainstorm error:", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    const result = await response.json();
+    const fullText = result[0].generated_text;
+    const aiResponse = fullText.split("[/INST]")[1]?.trim() || "Technical analysis complete.";
+
+    globalPromptCounter++; // Increase usage count
+
+    return new Response(JSON.stringify({ 
+      choices: [{ message: { content: aiResponse } }],
+      usage: { remaining: PROMPT_LIMIT - globalPromptCounter }
+    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
   }
 });
