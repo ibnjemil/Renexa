@@ -1,4 +1,4 @@
-const HUGGING_FACE_TOKEN = "hf_...uwdH"; // Your token from the screenshot
+const HUGGING_FACE_TOKEN = "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"; // Your token from the screenshot
 const MAX_PROMPTS = 10;
 
 // This tracks how many times the user has asked a question
