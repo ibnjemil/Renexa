@@ -1,6 +1,23 @@
-const HUGGING_FACE_TOKEN = "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"; // Paste your FULL token from your screenshot
+const HUGGING_FACE_TOKEN = "hf_...uwdH"; // Your token from the screenshot
+const MAX_PROMPTS = 10;
 
-export const generateAIResponse = async (userPrompt) => {
+// This tracks how many times the user has asked a question
+let promptCount = 0;
+
+export const generateAIResponse = async (userPrompt: string) => {
+  // 1. Check the 10-prompt limit
+  if (promptCount >= MAX_PROMPTS) {
+    return "Limit Reached: You have used your 10 free invention prompts for today.";
+  }
+
+  // 2. Check for "Invention" topics only (Topic Limit)
+  const inventionKeywords = ["invent", "build", "create", "design", "how to", "idea", "engine", "solar", "tech"];
+  const isRelevant = inventionKeywords.some(word => userPrompt.toLowerCase().includes(word));
+
+  if (!isRelevant) {
+    return "I am specialized in inventions only. Please ask me about building or designing something!";
+  }
+
   try {
     const response = await fetch(
       "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2",
@@ -11,15 +28,19 @@ export const generateAIResponse = async (userPrompt) => {
         },
         method: "POST",
         body: JSON.stringify({ 
-          inputs: `<s>[INST] You are Renexa AI, helping an inventor. ${userPrompt} [/INST]`,
+          inputs: `<s>[INST] You are Renexa AI, a specialized invention assistant for Ethiopian students. Help with this invention idea: ${userPrompt} [/INST]`,
         }),
       }
     );
 
     const result = await response.json();
-    // This cleans up the text so you only see the AI's answer
-    return result[0].generated_text.split("[/INST]")[1].trim();
+    promptCount++; // Increase the count after a successful answer
+    
+    // Clean up the response
+    const aiText = result[0].generated_text.split("[/INST]")[1].trim();
+    return `${aiText}\n\n(Remaining prompts: ${MAX_PROMPTS - promptCount})`;
+
   } catch (error) {
-    return "The AI is resting. Check your internet connection!";
+    return "The AI is currently offline. Please check your internet connection.";
   }
 };
