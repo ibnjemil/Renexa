@@ -17,21 +17,16 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    checkAdminStatus();
-  }, []);
-
-  const checkAdminStatus = async () => {
-    try {
+    const checkAdmin = async () => {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch('/api/admin/check', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      setIsAdmin(data.isAdmin);
-    } catch {
-      setIsAdmin(false);
-    }
-  };
+      if (token) {
+        const res = await fetch('/api/admin/check', { headers: { Authorization: `Bearer ${token}` } });
+        const data = await res.json();
+        setIsAdmin(data.isAdmin);
+      }
+    };
+    checkAdmin();
+  }, []);
 
   const handleLogin = (name: string) => {
     const newUser = {
@@ -58,7 +53,7 @@ function App() {
     if (currentPage === 'admin' && isAdmin) return <AdminDashboard />;
     switch (currentPage) {
       case 'home':
-        return <ClubFeed user={user} onLogin={handleLogin} />; // Or a dedicated WelcomeHero
+        return <ClubFeed user={user} onLogin={handleLogin} />;
       case 'spark':
         return <SparkArena user={user} onLogin={handleLogin} />;
       case 'club':
