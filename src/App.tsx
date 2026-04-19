@@ -1,50 +1,96 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { AuthProvider } from "@/hooks/useAuth";
-import { ThemeProvider } from "@/hooks/useTheme";
-import { Navbar } from "@/components/Navbar";
-import Index from "./pages/Index";
-import Browse from "./pages/Browse";
-import SparkArena from "./pages/SparkArena";
-import Brainstorm from "./pages/Brainstorm";
-import InventionDetail from "./pages/InventionDetail";
-import PostInvention from "./pages/PostInvention";
-import Login from "./pages/Login";
-import Account from "./pages/Account";
-import AdminDashboard from "./pages/AdminDashboard";
-import NotFound from "./pages/NotFound";
+import React, { useState, useEffect } from 'react';
+import { Navbar } from './components/Layout/Navbar';
+import { Footer } from './components/Layout/Footer';
+import { WelcomeHero } from './components/Home/WelcomeHero';
+import { SparkArena } from './components/SparkArena/SparkArena';
+import { ClubForum } from './components/InventorsClub/ClubForum';
+import { ChatBot } from './components/ChatBot/ChatBot';
+import { UserDashboard } from './components/Dashboard/UserDashboard';
+import { AdminDashboard } from './components/Dashboard/AdminDashboard';
+import { UserProfile } from './components/Profile/UserProfile';
 
-const queryClient = new QueryClient();
+function App() {
+  const [currentPage, setCurrentPage] = useState('home');
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem('renexa_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [isAdmin, setIsAdmin] = useState(false);
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <ThemeProvider>
-      <AuthProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <Navbar />
-            <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/browse" element={<Browse />} />
-              <Route path="/spark-arena" element={<SparkArena />} />
-              <Route path="/brainstorm" element={<Brainstorm />} />
-              <Route path="/invention/:id" element={<InventionDetail />} />
-              <Route path="/post" element={<PostInvention />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/account" element={<Account />} />
-              <Route path="/admin" element={<AdminDashboard />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </BrowserRouter>
-        </TooltipProvider>
-      </AuthProvider>
-    </ThemeProvider>
-  </QueryClientProvider>
-);
+  useEffect(() => {
+    checkAdminStatus();
+  }, []);
+
+  const checkAdminStatus = async () => {
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/admin/check', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setIsAdmin(data.isAdmin);
+    } catch (error) {
+      setIsAdmin(false);
+    }
+  };
+
+  const handleLogin = (name: string) => {
+    const newUser = {
+      name,
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`,
+      joined: new Date().toISOString(),
+      email: `${name.toLowerCase().replace(/\s/g, '')}@example.com`
+    };
+    setUser(newUser);
+    localStorage.setItem('renexa_user', JSON.stringify(newUser));
+    localStorage.setItem('renexa_author', name);
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('renexa_user');
+    localStorage.removeItem('renexa_author');
+    localStorage.removeItem('admin_token');
+    setCurrentPage('home');
+    setIsAdmin(false);
+  };
+
+  const renderPage = () => {
+    if (currentPage === 'admin' && isAdmin) {
+      return <AdminDashboard />;
+    }
+
+    switch (currentPage) {
+      case 'home':
+        return <WelcomeHero onGetStarted={() => setCurrentPage('spark')} />;
+      case 'spark':
+        return <SparkArena user={user} onLogin={handleLogin} />;
+      case 'club':
+        return <ClubForum user={user} onLogin={handleLogin} />;
+      case 'chat':
+        return <ChatBot />;
+      case 'dashboard':
+        return <UserDashboard user={user} onLogin={handleLogin} />;
+      case 'profile':
+        return <UserProfile user={user} onLogout={handleLogout} />;
+      default:
+        return <WelcomeHero onGetStarted={() => setCurrentPage('spark')} />;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 flex flex-col">
+      <Navbar
+        currentPage={currentPage}
+        setCurrentPage={setCurrentPage}
+        user={user}
+        onLogout={handleLogout}
+        isAdmin={isAdmin}
+      />
+      <main className="flex-1">{renderPage()}</main>
+      <Footer />
+    </div>
+  );
+}
 
 export default App;
