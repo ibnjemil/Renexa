@@ -1,173 +1,147 @@
 import express from "express";
 import cors from "cors";
-import { createViteServer } from "./viteDevServer.js";
+import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
 
-const isDev = process.env.NODE_ENV !== "production";
+dotenv.config();
 
 const app = express();
-app.use(cors());
+const PORT = process.env.PORT || 5000;
+
+app.use(cors({ origin: "http://localhost:5173", credentials: true }));
 app.use(express.json());
 
-const SUPABASE_URL = "https://ymwhedotzhgrgpybfjmt.supabase.co";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const supabaseUrl = process.env.SUPABASE_URL!;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-const SYSTEM_PROMPT = `You are the Renexa AI Brainstorm Assistant — a world-class invention development partner. Help inventors develop their ideas into full invention concepts with deep technical analysis.
+const DEEPSEEK_API_KEY = process.env.sk-cbf8434153fd4618a29ec878f391b46d;
+const adminTokens = new Map();
+const promptLimits = new Map();
 
-For each idea, provide a comprehensive breakdown:
+// Admin auth
+app.post("/api/admin/login", (req, res) => {
+  const { username, password } = req.body;
+  if (username === "admin" && password === "12345678") {
+    const token = Math.random().toString(36).substring(2);
+    adminTokens.set(token, { username, expires: Date.now() + 24 * 3600 * 1000 });
+    res.json({ success: true, token });
+  } else {
+    res.status(401).json({ success: false });
+  }
+});
 
-## 💡 Invention Name
-A catchy, memorable name
+app.get("/api/admin/check", (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  res.json({ isAdmin: token && adminTokens.has(token) });
+});
 
-## 🎯 Problem Statement
-What real-world problem this solves, who suffers from it, and how big the problem is
+// Posts CRUD
+app.get("/api/posts", async (req, res) => {
+  const { data, error } = await supabase.from("posts").select("*").order("created_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
 
-## 🔧 Technical Approach
-Specific engineering methods, technologies, materials, and how they work together. Be detailed and practical.
+app.post("/api/posts", async (req, res) => {
+  const { title, content, author_name, author_avatar, user_id } = req.body;
+  if (!content || !author_name) return res.status(400).json({ error: "Missing content or author" });
+  const { data, error } = await supabase.from("posts").insert([{ title, content, author_name, author_avatar, user_id }]).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json(data);
+});
 
-## 📊 Market Opportunity
-Target market size, demographics, competitive landscape, and potential revenue
+app.put("/api/posts/:id", async (req, res) => {
+  const { id } = req.params;
+  const { title, content } = req.body;
+  const { data, error } = await supabase.from("posts").update({ title, content, updated_at: new Date() }).eq("id", id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
 
-## 🚀 Implementation Roadmap
-Step-by-step plan from concept to prototype to market, with estimated timelines
+app.delete("/api/posts/:id", async (req, res) => {
+  const { id } = req.params;
+  const { error } = await supabase.from("posts").delete().eq("id", id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
 
-## 💰 Revenue Model
-How to monetize — pricing strategies, business models, licensing opportunities
+app.post("/api/posts/:id/like", async (req, res) => {
+  const { id } = req.params;
+  const { user_id } = req.body;
+  if (user_id) await supabase.from("likes").insert([{ post_id: id, user_id }]);
+  const { data, error } = await supabase.from("posts").update({ likes_count: supabase.raw("likes_count + 1") }).eq("id", id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
 
-## ⚡ Key Risks & Mitigations
-Potential challenges and how to overcome them
+app.post("/api/posts/:id/comments", async (req, res) => {
+  const { id } = req.params;
+  const { content, author_name, author_avatar, user_id } = req.body;
+  if (!content || !author_name) return res.status(400).json({ error: "Missing content or author" });
+  const { data: comment, error: commentErr } = await supabase.from("comments").insert([{ post_id: id, content, author_name, author_avatar, user_id }]).select().single();
+  if (commentErr) return res.status(500).json({ error: commentErr.message });
+  await supabase.from("posts").update({ comments_count: supabase.raw("comments_count + 1") }).eq("id", id);
+  res.json({ comment });
+});
 
-Be enthusiastic, specific, technically accurate, and actionable. Use clear markdown formatting with headers, bullet points, and emphasis where appropriate.`;
-
-// ─── AI Brainstorm ──────────────────────────────────────────────────────────
+// AI Brainstorm (DeepSeek)
 app.post("/api/brainstorm", async (req, res) => {
-  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-  if (!OPENROUTER_API_KEY) {
-    return res.status(500).json({ error: "AI API key is not configured on the server." });
-  }
+  const { prompt, sessionId } = req.body;
+  if (!prompt) return res.status(400).json({ error: "Prompt required" });
 
-  const { messages } = req.body;
-  if (!messages || !Array.isArray(messages)) {
-    return res.status(400).json({ error: "messages array is required" });
-  }
+  const today = new Date().toDateString();
+  let limit = promptLimits.get(sessionId);
+  if (!limit || limit.date !== today) limit = { count: 0, date: today };
+  if (limit.count >= 10) return res.json({ response: "✨ 10 free prompts used today. Come back tomorrow!", remaining: 0 });
+
+  const inventionKeywords = ["invent", "build", "create", "design", "make", "idea", "engine", "solar", "tech", "robot", "device", "prototype"];
+  const isRelevant = inventionKeywords.some(kw => prompt.toLowerCase().includes(kw));
+  if (!isRelevant) return res.json({ response: "💡 I specialise in inventions! Ask me about building, designing, or prototyping.", remaining: 10 - limit.count });
 
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": process.env.REPLIT_DEV_DOMAIN
-          ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-          : "https://renexa.app",
-        "X-Title": "Renexa AI Brainstorm",
-      },
+      headers: { Authorization: `Bearer ${DEEPSEEK_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
-        messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
-        stream: true,
+        model: "deepseek-chat",
+        messages: [{ role: "system", content: "You are Renexa AI, an invention assistant for Ethiopian students. Give practical, encouraging advice under 250 words." }, { role: "user", content: prompt }],
+        temperature: 0.7,
+        max_tokens: 500,
       }),
     });
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.error("OpenRouter error:", response.status, text);
-      if (response.status === 429) return res.status(429).json({ error: "Rate limited. Please try again in a moment." });
-      if (response.status === 402) return res.status(402).json({ error: "AI credits exhausted." });
-      return res.status(500).json({ error: "AI gateway error" });
-    }
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-
-    if (!response.body) return res.status(500).json({ error: "No response body" });
-
-    const reader = response.body.getReader();
-    const pump = async () => {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) { res.end(); break; }
-        res.write(value);
-      }
-    };
-    pump().catch((err) => { console.error("Stream error:", err); res.end(); });
-  } catch (err) {
-    console.error("Brainstorm error:", err);
-    res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
-  }
-});
-
-// ─── Public inventions (bypasses RLS using service role) ──────────────────
-app.get("/api/inventions", async (_req, res) => {
-  if (!SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: "Service role key not configured" });
-  }
-  try {
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/inventions?select=*&verified=eq.true&order=created_at.desc`,
-      {
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
     const data = await response.json();
-    res.json(data);
+    const aiText = data.choices[0]?.message?.content || "Sorry, no response.";
+    limit.count++;
+    promptLimits.set(sessionId, limit);
+    await supabase.from("ai_chat_history").insert([{ session_id: sessionId, user_prompt: prompt, ai_response: aiText, remaining_prompts: 10 - limit.count }]);
+    res.json({ response: aiText, remaining: 10 - limit.count });
   } catch (err) {
-    console.error("Inventions fetch error:", err);
-    res.status(500).json({ error: "Failed to fetch inventions" });
+    console.error(err);
+    res.status(500).json({ error: "AI service unavailable" });
   }
 });
 
-// ─── Public single invention ──────────────────────────────────────────────
-app.get("/api/inventions/:id", async (req, res) => {
-  if (!SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: "Service role key not configured" });
-  }
-  try {
-    const { id } = req.params;
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/inventions?id=eq.${id}&select=*`,
-      {
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-    const data = await response.json();
-    if (!Array.isArray(data) || data.length === 0) {
-      return res.status(404).json({ error: "Not found" });
-    }
-    res.json(data[0]);
-  } catch (err) {
-    console.error("Invention fetch error:", err);
-    res.status(500).json({ error: "Failed to fetch invention" });
-  }
+// Stats
+app.get("/api/stats", async (req, res) => {
+  const { data, error } = await supabase.from("posts").select("likes_count, comments_count");
+  if (error) return res.status(500).json({ error: error.message });
+  const totalPosts = data.length;
+  const totalLikes = data.reduce((s, p) => s + (p.likes_count || 0), 0);
+  const totalComments = data.reduce((s, p) => s + (p.comments_count || 0), 0);
+  const uniqueAuthors = new Set(data.map(p => p.author_name)).size;
+  res.json({ totalPosts, totalLikes, totalComments, uniqueAuthors });
 });
 
-const PORT = parseInt(process.env.PORT || "5000", 10);
+app.get("/api/users", async (req, res) => {
+  const { data, error } = await supabase.from("posts").select("author_name, author_avatar");
+  if (error) return res.status(500).json({ error: error.message });
+  const userMap = new Map();
+  data.forEach(p => {
+    if (!userMap.has(p.author_name)) userMap.set(p.author_name, { name: p.author_name, avatar: p.author_avatar, postCount: 0 });
+    userMap.get(p.author_name).postCount++;
+  });
+  res.json(Array.from(userMap.values()));
+});
 
-if (isDev) {
-  const vite = await createViteServer();
-  app.use(vite.middlewares);
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Dev server running on port ${PORT}`);
-  });
-} else {
-  const { default: path } = await import("path");
-  const { fileURLToPath } = await import("url");
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const distPath = path.join(__dirname, "../dist");
-  const { default: serveStatic } = await import("serve-static");
-  app.use(serveStatic(distPath));
-  app.get("*", (_req, res) => {
-    res.sendFile(path.join(distPath, "index.html"));
-  });
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-  });
-}
+app.listen(PORT, () => console.log(`🚀 Backend on http://localhost:${PORT}`));
