@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Navbar } from './components/Layout/Navbar';
-import { Footer } from './components/Layout/Footer';
-import { WelcomeHero } from './components/Home/WelcomeHero';
-import { SparkArena } from './components/SparkArena/SparkArena';
-import { ClubForum } from './components/InventorsClub/ClubForum';
-import { ChatBot } from './components/ChatBot/ChatBot';
-import { UserDashboard } from './components/Dashboard/UserDashboard';
-import { AdminDashboard } from './components/Dashboard/AdminDashboard';
-import { UserProfile } from './components/Profile/UserProfile';
+import { Navbar } from './components/Navbar';
+import { Footer } from './components/Footer';
+import { ClubFeed } from './components/club/ClubFeed';
+import { SparkArena } from './components/SparkArena';
+import { ChatBot } from './components/ChatBot';
+import { UserDashboard } from './components/UserDashboard';
+import { AdminDashboard } from './components/AdminDashboard';
+import { UserProfile } from './components/UserProfile';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('home');
@@ -29,7 +28,7 @@ function App() {
       });
       const data = await res.json();
       setIsAdmin(data.isAdmin);
-    } catch (error) {
+    } catch {
       setIsAdmin(false);
     }
   };
@@ -56,17 +55,14 @@ function App() {
   };
 
   const renderPage = () => {
-    if (currentPage === 'admin' && isAdmin) {
-      return <AdminDashboard />;
-    }
-
+    if (currentPage === 'admin' && isAdmin) return <AdminDashboard />;
     switch (currentPage) {
       case 'home':
-        return <WelcomeHero onGetStarted={() => setCurrentPage('spark')} />;
+        return <ClubFeed user={user} onLogin={handleLogin} />; // Or a dedicated WelcomeHero
       case 'spark':
         return <SparkArena user={user} onLogin={handleLogin} />;
       case 'club':
-        return <ClubForum user={user} onLogin={handleLogin} />;
+        return <ClubFeed user={user} onLogin={handleLogin} />;
       case 'chat':
         return <ChatBot />;
       case 'dashboard':
@@ -74,7 +70,7 @@ function App() {
       case 'profile':
         return <UserProfile user={user} onLogout={handleLogout} />;
       default:
-        return <WelcomeHero onGetStarted={() => setCurrentPage('spark')} />;
+        return <ClubFeed user={user} onLogin={handleLogin} />;
     }
   };
 
