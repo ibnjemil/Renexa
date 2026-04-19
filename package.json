@@ -9,9 +9,12 @@
     "dev:vite": "vite",
     "build": "vite build",
     "vercel-build": "npm run build",
+    "build:dev": "vite build --mode development",
     "start": "node dist-server/index.js",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
